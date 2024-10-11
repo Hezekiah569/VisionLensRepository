@@ -1,4 +1,5 @@
 import cv2
+import time
 from LensLab.voice_assistance import provide_voice_feedback  # Import the voice feedback function
 from ultralytics import YOLO
 
@@ -7,10 +8,18 @@ def main():
     model = YOLO('yolov8n.pt')  # You can choose 'yolov8n.pt', 'yolov8s.pt', etc. depending on your needs
     cap = cv2.VideoCapture(0)
 
+    # Variables to calculate FPS
+    prev_time = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+
+        # Get current time to calculate FPS
+        curr_time = time.time()
+        fps = 1 / (curr_time - prev_time)
+        prev_time = curr_time
 
         # Perform detection using YOLOv8
         results = model(frame)
@@ -36,7 +45,10 @@ def main():
         # Render the results on the frame
         annotated_frame = r.plot()  # This plots bounding boxes and labels on the frame
 
-        # Display the frame with results
+        # Display FPS on the frame
+        cv2.putText(annotated_frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+        # Display the frame with results and FPS
         cv2.imshow('Smart Eyewear', annotated_frame)
 
         # Exit the loop when 'q' is pressed
