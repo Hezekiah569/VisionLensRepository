@@ -1,38 +1,28 @@
 import cv2
 from ultralytics import YOLO
 
-def detect_objects():
-    # Load YOLOv8 model
-    model = YOLO('yolov8n.pt')  # You can also try 'yolov8s.pt' for more accuracy but lower speed
+def detect_objects(frame, model):
+    # Perform detection using YOLOv8
+    results = model(frame)
 
-    cap = cv2.VideoCapture(0)  # Open camera
+    # Extract detection details and annotate the frame
+    detected_objects = []
+    for r in results:  # Iterate over the results
+        boxes = r.boxes  # Get detected boxes
+        for box in boxes:
+            cls = int(box.cls)  # Get class index
+            conf = float(box.conf)  # Get confidence score
+            bbox = box.xyxy[0].tolist()  # Get bounding box coordinates as [x1, y1, x2, y2]
 
-    # Optional: Set camera resolution for faster processing
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            # Apply confidence threshold
+            if conf > 0.5:
+                detected_objects.append({
+                    'class': cls,
+                    'confidence': conf,
+                    'bbox': bbox  # Pass bounding box for positional feedback
+                })
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    # Annotate the frame with detection results
+    annotated_frame = results[0].plot()  # This plots bounding boxes and labels on the frame
 
-        # Inference using YOLOv8
-        results = model(frame)
-
-        for result in results:
-            # Filter detections by confidence threshold
-            if result.conf > 0.5:
-                print(f"Detected: {result.name} with confidence {result.conf}")
-
-        # Render results on the frame
-        results.render()
-
-        # Show the frame with detections
-        cv2.imshow('YOLOv8 Detection', frame)
-
-        # Press 'q' to exit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
+    return detected_objects, annotated_frame

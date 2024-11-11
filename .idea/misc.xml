@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="VisionLensRepository" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="VisionLensRepository" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="VISION" project-jdk-type="Python SDK" />
 </project>
