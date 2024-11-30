@@ -1,9 +1,13 @@
 import azure.cognitiveservices.speech as speechsdk
 import time  # Ensure time is imported
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 # Set up Azure Speech SDK configuration
-speech_key = "67882c1994524c9a9ce1724265ccc552"
-service_region = "southeastasia"
+speech_key = os.getenv("AZURE_SPEECH_KEY")
+service_region = os.getenv("AZURE_SPEECH_REGION")
 speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
 speech_config.speech_synthesis_voice_name = "en-US-SerenaMultilingualNeural"
 speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)

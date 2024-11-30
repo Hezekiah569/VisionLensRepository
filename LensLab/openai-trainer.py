@@ -1,43 +1,22 @@
-# # Load the dataset
-# from datasets import load_dataset
-# from IPython.display import Audio
-#
-# ds = load_dataset("leafspark/openai-voices")
-#
-# # Iterate through the training dataset
-# for i, sample in enumerate(ds['train']):
-#     audio_data = sample['audio']
-#     label = sample['label']
-#
-#     print(f"Sample {i + 1}:")
-#     print(f"Audio: {audio_data}")
-#     print(f"Label: {label}")
-#     print("-------------------")
-#
-# # Example: Play the first audio sample
-# audio_path = ds['train'][0]['audio']['path']
-# Audio(audio_path)
-
-# Use a pipeline as a high-level helper
 from openai import OpenAI
+import os
+from dotenv import load_dotenv
 
 client = OpenAI(
   base_url = "https://integrate.api.nvidia.com/v1",
-  api_key = "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"
+  api_key = "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"
 )
 
 completion = client.chat.completions.create(
   model="nvidia/llama-3.1-nemotron-70b-instruct",
-  messages=[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"What is the farthest galaxy from Earth?"}],
+  messages=[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"How do we know that we are talking to an AI?"}],
   temperature=0.5,
   top_p=0.7,
-  max_tokens=800,
+  max_tokens=1024,
   stream=True
 )
 
 for chunk in completion:
   if chunk.choices[0].delta.content is not None:
     print(chunk.choices[0].delta.content, end="")
-
-
 

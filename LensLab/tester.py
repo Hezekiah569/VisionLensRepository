@@ -1,54 +1,38 @@
-from transformers import pipeline
-import sounddevice as sd
-import wave
-import tempfile
+import azure.cognitiveservices.speech as speechsdk
+import os
+from dotenv import load_dotenv
 
-# Initialize Whisper with explicit language setting to avoid detection warning
-whisper_pipeline = pipeline(
-    "automatic-speech-recognition",
-    model="openai/whisper-large-v3-turbo",
-    language="en",  # Force language to English
-    device=0  # Use GPU for faster processing (set to -1 for CPU)
-)
+load_dotenv()
 
+# Speech service subscription key and region
+speech_key = os.getenv("AZURE_SPEECH_KEY")
+service_region = os.getenv("AZURE_SPEECH_REGION")
 
-def record_audio(duration=5, fs=16000):
-    """
-    Record audio from the microphone for the specified duration and sample rate.
-    :param duration: Duration of the recording in seconds
-    :param fs: Sampling rate in Hz
-    :return: Recorded audio as numpy array
-    """
-    print("Recording... Please speak clearly.")
-    recording = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='int16')
-    sd.wait()  # Wait until the recording is done
-    print("Recording complete.")
-    return recording.flatten()
+speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+speech_config.speech_synthesis_voice_name = "en-US-JaneNeural"
 
+# SSML text with speaking style
+ssml_text = """
+<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'>
+    <voice name='en-US-JaneNeural'>
+        <mstts:express-as style='cheerful'>
+            Hi, this is Katniss speaking in a cheerful tone!
+        </mstts:express-as>
+    </voice>
+</speak>
+"""
 
-def transcribe_audio(audio_data):
-    """
-    Transcribe audio data using Whisper ASR model.
-    :param audio_data: Audio data to transcribe
-    :return: Transcribed text
-    """
-    print("Transcribing audio...")
+# Initialize speech synthesizer
+speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
 
-    # Save the audio data to a temporary file for Whisper
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        with wave.open(tmp_file.name, 'wb') as wf:
-            wf.setnchannels(1)  # Mono audio
-            wf.setsampwidth(2)  # 16-bit audio
-            wf.setframerate(16000)  # Standard sampling rate for Whisper
-            wf.writeframes(audio_data.tobytes())
+# Synthesize speech using SSML
+result = speech_synthesizer.speak_ssml_async(ssml_text).get()
 
-        # Perform transcription with Whisper
-        transcription = whisper_pipeline(tmp_file.name)
-
-    print(f"Transcription: {transcription['text']}")
-    return transcription['text']
-
-
-# Run the transcription process
-audio_data = record_audio(duration=5)  # Record for 5 seconds
-transcription = transcribe_audio(audio_data)
+# Check result
+if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+    print("Speech synthesized with style successfully!")
+elif result.reason == speechsdk.ResultReason.Canceled:
+    cancellation_details = result.cancellation_details
+    print("Speech synthesis canceled: {}".format(cancellation_details.reason))
+    if cancellation_details.reason == speechsdk.CancellationReason.Error:
+        print("Error details: {}".format(cancellation_details.error_details))

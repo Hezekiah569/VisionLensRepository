@@ -1,0 +1,5 @@
+# Ignore specific file
+LensLab/.env
+LensLab/testerv2.py
+LensLab/hci_tester.py
+LensLab/openai-trainer.py
