@@ -1,38 +1,30 @@
 import cv2
 from ultralytics import YOLO
 
-def detect_objects():
-    # Load YOLOv8 model
-    model = YOLO('yolov8n.pt')  # You can also try 'yolov8s.pt' for more accuracy but lower speed
+def detect_objects(frame, model):
+    """
+    Perform object detection on a given frame using the YOLO model.
 
-    cap = cv2.VideoCapture(0)  # Open camera
+    Args:
+        frame: The image frame to process.
+        model: The YOLO model used for detection.
 
-    # Optional: Set camera resolution for faster processing
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    Returns:
+        detected_objects: A list of detected objects with class and bounding box info.
+        annotated_frame: The frame annotated with detection results.
+    """
+    # Perform inference
+    results = model(frame)
+    detected_objects = []
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    for result in results:
+        for box in result.boxes:
+            detected_objects.append({
+                'class': int(box.cls[0]),
+                'bbox': box.xyxy[0].tolist()
+            })
 
-        # Inference using YOLOv8
-        results = model(frame)
+    # Annotate the frame
+    annotated_frame = results[0].plot()
 
-        for result in results:
-            # Filter detections by confidence threshold
-            if result.conf > 0.5:
-                print(f"Detected: {result.name} with confidence {result.conf}")
-
-        # Render results on the frame
-        results.render()
-
-        # Show the frame with detections
-        cv2.imshow('YOLOv8 Detection', frame)
-
-        # Press 'q' to exit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
+    return detected_objects, annotated_frame
