@@ -1,7 +1,12 @@
 import cv2
 import time
 import threading
-from LensLab.voice_assistance import provide_voice_feedback, recognize_command, handle_command, speak_text
+from LensLab.voice_assistance import (
+    provide_voice_feedback,
+    recognize_command,
+    handle_command,
+    speak_text
+)
 from LensLab.object_detection import detect_objects
 from ultralytics import YOLO
 from dotenv import load_dotenv
@@ -10,25 +15,31 @@ import speech_recognition as sr
 # Load environment variables
 load_dotenv()
 
-def voice_feedback_thread(detected_objects, model_names, image_width, image_height):
+
+def voice_feedback_thread(detected_objects, model_names, image_width, image_height, mode):
     """Function to run voice feedback in a separate thread."""
-    provide_voice_feedback(detected_objects, model_names, image_width, image_height)
+    provide_voice_feedback(detected_objects, model_names, image_width, image_height, mode)
+
 
 def speech_recognition_thread(recognizer, microphone, state_lock, state):
     """Thread to continuously listen for user commands."""
     while True:
         try:
-            command = recognize_command(recognizer, microphone)  # Recognize user command
+            command = recognize_command(recognizer, microphone)
             if command:
                 with state_lock:
-                    # Update navigation state based on command
-                    state["is_navigating"] = handle_command(command, state["is_navigating"])
+                    state["is_navigating"], state["is_identifying"] = handle_command(
+                        command,
+                        state["is_navigating"],
+                        state["is_identifying"]
+                    )
         except Exception as e:
             print(f"Error in recognizing command: {e}")
 
+
 def main():
     # Load YOLOv8 model
-    model = YOLO('yolov8n.pt')
+    model = YOLO('best.pt')
     cap = cv2.VideoCapture(0)
 
     # Initialize recognizer and microphone
@@ -37,33 +48,36 @@ def main():
 
     # Variables to calculate FPS and track greeting state
     prev_time = 0
-    greeting_state = {'greeting_given': False}
 
     # Shared state for threading
-    state = {"is_navigating": False}
+    state = {"is_navigating": False, "is_identifying": False}
     state_lock = threading.Lock()
 
     # Initial Greeting
     initial_greeting = (
         "Hi, my name's Samantha, and I will be your VisionAssistant for today. "
-        "To start navigation, please say 'navigate'."
+        "To start navigation, please say 'navigate'. To start identifying objects, say 'identify'."
     )
     print(initial_greeting)
-    speak_text(initial_greeting)  # Issue the greeting before entering the main loop
+    speak_text(initial_greeting)
 
     # Start the speech recognition thread
-    threading.Thread(target=speech_recognition_thread, args=(recognizer, microphone, state_lock, state), daemon=True).start()
+    threading.Thread(
+        target=speech_recognition_thread,
+        args=(recognizer, microphone, state_lock, state),
+        daemon=True
+    ).start()
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Read navigation state safely
         with state_lock:
             is_navigating = state["is_navigating"]
+            is_identifying = state["is_identifying"]
 
-        if is_navigating:
+        if is_navigating or is_identifying:
             # Calculate FPS
             curr_time = time.time()
             fps = 1 / (curr_time - prev_time)
@@ -75,14 +89,16 @@ def main():
             detected_objects, annotated_frame = detect_objects(frame, model)
 
             # Start voice feedback in a separate thread
+            mode = "navigate" if is_navigating else "identify"
             voice_thread = threading.Thread(
                 target=voice_feedback_thread,
-                args=(detected_objects, model.names, image_width, image_height),
+                args=(detected_objects, model.names, image_width, image_height, mode)
             )
             voice_thread.start()
 
             # Display FPS on the frame
-            cv2.putText(annotated_frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(annotated_frame, f"FPS: {int(fps)}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             # Show the annotated frame
             cv2.imshow('Smart Eyewear', annotated_frame)
@@ -90,12 +106,12 @@ def main():
             # Display the frame while idle (waiting for commands)
             cv2.imshow('Smart Eyewear', frame)
 
-        # Exit the loop when 'q' is pressed
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()
