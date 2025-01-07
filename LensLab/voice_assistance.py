@@ -23,12 +23,24 @@ speech_config.speech_synthesis_voice_name = "en-US-AvaMultilingualNeural"
 speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
 
 last_feedback_time = {}
-FEEDBACK_COOLDOWN = 5
+FEEDBACK_COOLDOWN = 8.5
 
+def get_object_direction(bbox, image_width):
+    """
+    Determine the direction of an object based on its bounding box.
+    """
+    x, y, width, height = bbox
+    center_x = x + (width / 2)
+
+    if center_x < image_width * 0.33:
+        return "left"
+    elif center_x > image_width * 0.66:
+        return "right"
+    return "front"
 
 def provide_voice_feedback(detected_objects, class_names, image_width, image_height, mode):
     """
-    Provide distinct voice feedback based on the mode (navigate or identify).
+    Provide distinct voice feedback based on the mode (navigate or identify), with cooldown logic.
     """
     global last_feedback_time
     current_time = time.time()
@@ -51,15 +63,21 @@ def provide_voice_feedback(detected_objects, class_names, image_width, image_hei
             if 0 <= index < len(class_names):
                 object_name = class_names[index]
                 if object_name in valid_objects:
-                    if object_name not in last_feedback_time or current_time - last_feedback_time[
-                        object_name] > FEEDBACK_COOLDOWN:
-                        response = responses.get(object_name, default_response.format(object_name=object_name))
+                    # Check if enough time has passed since the last feedback for this object
+                    last_time = last_feedback_time.get(object_name, 0)
+                    if current_time - last_time > FEEDBACK_COOLDOWN:
+                        direction = get_object_direction(obj['bbox'], image_width)
+                        response_template = responses.get(object_name, {})
+                        response = response_template.get(direction, default_response)
+                        response = response.format(object_name=object_name, direction=direction)
                         feedback_parts.append(response)
+
+                        # Update the last feedback time for this object
                         last_feedback_time[object_name] = current_time
 
     if feedback_parts:
+        # Combine all responses and speak at once
         speak_text(" ".join(feedback_parts))
-
 
 def handle_command(input_text, is_navigating, is_identifying):
     """
@@ -75,9 +93,16 @@ def handle_command(input_text, is_navigating, is_identifying):
         speak_text("Stopping all modes.")
         return False, False
     elif input_text.lower() == "tutorial":
-        speak_text("Say 'navigate' to start navigation, 'identify' to identify objects, or 'stop' to stop.")
+        speak_text(
+        "Welcome to the navigation assistant tutorial. Here’s a quick guide on how to interact with me:"
+        " Say 'navigate' to enter navigation mode. In this mode, I will guide you through your surroundings "
+        "and describe nearby objects, obstacles, and directions."
+        " Say 'identify' to switch to identification mode, where I will help you recognize specific objects, "
+        "such as coins, furniture, or devices, and tell you their positions relative to you."
+        " Say 'stop' to exit the current mode or end our interaction."
+        " You can also say 'help' at any time to hear these instructions again."
+        " Now, go ahead and say one of the commands: 'navigate', 'identify', or 'stop'.")
     return is_navigating, is_identifying
-
 
 def recognize_command(recognizer, microphone):
     """
@@ -99,12 +124,22 @@ def recognize_command(recognizer, microphone):
         print(f"Speech recognition service error: {e}")
     return None
 
-
 def speak_text(text):
     """
-    Speak text using Azure Speech SDK.
+    Speak text using Azure Speech SDK with slower speech rate.
     """
     print(f"Speaking: {text}")
-    result = speech_synthesizer.speak_text_async(text).get()
+    ssml_text = f"""
+    <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'>
+        <voice name='{speech_config.speech_synthesis_voice_name}'>
+            <mstts:express-as style='default'>
+                <prosody rate='-15%'>
+                    {text}
+                </prosody>
+            </mstts:express-as>
+        </voice>
+    </speak>
+    """
+    result = speech_synthesizer.speak_ssml_async(ssml_text).get()
     if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
         print("Speech synthesis failed.")

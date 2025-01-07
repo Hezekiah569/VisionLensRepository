@@ -1,2 +1,4 @@
 .env
 yolov8n.pt
+LensLab/voice_tester.py
+LensLab/voice_laboratory.py

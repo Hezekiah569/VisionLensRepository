@@ -1,7 +1,7 @@
 import cv2
 from ultralytics import YOLO
 
-def detect_objects(frame, model, confidence_threshold=0.8):
+def detect_objects(frame, model, confidence_threshold=0.75):
     """
     Perform object detection on a given frame using the YOLO model.
 
