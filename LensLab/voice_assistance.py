@@ -1,80 +1,189 @@
+from LensLab.samantha_config import (
+    IDENTIFY_MODE_OBJECTS,
+    NAVIGATE_MODE_OBJECTS,
+    IDENTIFY_MODE_RESPONSES,
+    NAVIGATE_MODE_RESPONSES,
+    DEFAULT_IDENTIFY_RESPONSE,
+    DEFAULT_NAVIGATE_RESPONSE
+)
+
+import time
 import azure.cognitiveservices.speech as speechsdk
-import time  # Ensure time is imported
+import speech_recognition as sr
 from dotenv import load_dotenv
 import os
+from collections import defaultdict
 
 load_dotenv()
 
-# Set up Azure Speech SDK configuration
+# Azure Speech SDK configuration
 speech_key = os.getenv("AZURE_SPEECH_KEY")
 service_region = os.getenv("AZURE_SPEECH_REGION")
 speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
-speech_config.speech_synthesis_voice_name = "en-US-SerenaMultilingualNeural"
+speech_config.speech_synthesis_voice_name = "en-US-AvaMultilingualNeural"
 speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
 
-# Initialize feedback tracking variables
-last_feedback = {}
-FEEDBACK_COOLDOWN = 5  # Cooldown period in seconds
+def get_object_direction(bbox, image_width):
+    x, y, width, height = bbox
+    center_x = x + (width / 2)
+
+    if center_x < image_width * 0.22:
+        return "left"
+    elif center_x > image_width * 0.77:
+        return "right"
+    return "front"
 
 
-def get_relative_position(bbox, image_width, image_height):
-    x_center = (bbox[0] + bbox[2]) / 2
-    y_center = (bbox[1] + bbox[3]) / 2
-    horizontal_position = "left" if x_center < image_width / 3 else "right" if x_center > 2 * image_width / 3 else "center"
-    vertical_position = "top" if y_center < image_height / 3 else "bottom" if y_center > 2 * image_height / 3 else "middle"
-    return f"{vertical_position} {horizontal_position}".strip() if horizontal_position != "center" or vertical_position != "middle" else "center"
+def format_detections(objects_by_direction):
+    direction_phrases = []
 
+    for direction, objects in objects_by_direction.items():
+        if not objects:
+            continue
 
-def provide_voice_feedback(detected_objects, class_names, image_width, image_height, greeting_state):
-    global last_feedback
-    current_time = time.time()
+        # Count occurrences of each unique object
+        object_counts = {}
+        for obj in objects:
+            object_counts[obj] = object_counts.get(obj, 0) + 1
 
-    # Initial greeting
-    if not greeting_state['greeting_given']:
-        text = "Hi, my name's Samantha and I will be your VisionAssistant for today. Hope we get along well!"
-        result = speech_synthesizer.speak_text_async(text).get()
-        greeting_state['greeting_given'] = True
-        if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
-            print("Speech synthesis failed for greeting.")
+        # Format objects for this direction
+        object_phrases = []
+        for obj, count in object_counts.items():
+            if count > 1:
+                object_phrases.append(f"{count} {obj}s")
+            else:
+                object_phrases.append(f"a {obj}")
 
-    feedback_parts = []
-    current_feedback = {}  # Temporary storage for objects detected this frame
+        # Combine objects for this direction
+        if len(object_phrases) == 1:
+            direction_phrases.append(f"{object_phrases[0]} to your {direction}")
+        elif len(object_phrases) == 2:
+            direction_phrases.append(f"{object_phrases[0]} and {object_phrases[1]} to your {direction}")
+        else:
+            objects_text = ", ".join(object_phrases[:-1]) + f", and {object_phrases[-1]}"
+            direction_phrases.append(f"{objects_text} to your {direction}")
 
-    # Generate feedback for detected objects
+    if not direction_phrases:
+        return "No objects detected"
+    elif len(direction_phrases) == 1:
+        return f"I see {direction_phrases[0]}"
+    elif len(direction_phrases) == 2:
+        return f"I see {direction_phrases[0]}, and {direction_phrases[1]}"
+    else:
+        return f"I see {', '.join(direction_phrases[:-1])}, and {direction_phrases[-1]}"
+
+def provide_voice_feedback(detected_objects, class_names, image_width, image_height, mode):
+    """Provide distinct voice feedback based on the mode."""
+    valid_objects = NAVIGATE_MODE_OBJECTS if mode == "navigate" else IDENTIFY_MODE_OBJECTS
+    response_dict = NAVIGATE_MODE_RESPONSES if mode == "navigate" else IDENTIFY_MODE_RESPONSES
+    default_response = DEFAULT_NAVIGATE_RESPONSE if mode == "navigate" else DEFAULT_IDENTIFY_RESPONSE
+
+    # Group objects by direction
+    objects_by_direction = defaultdict(list)
+
     for obj in detected_objects:
         if 'class' in obj and 'bbox' in obj:
             index = obj['class']
             if 0 <= index < len(class_names):
                 object_name = class_names[index]
-                position = get_relative_position(obj['bbox'], image_width, image_height)
+                if object_name in valid_objects:
+                    direction = get_object_direction(obj['bbox'], image_width)
+                    objects_by_direction[direction].append(object_name)
 
-                # Check if the object can be mentioned based on cooldown
-                if (object_name not in last_feedback or
-                        last_feedback[object_name]['position'] != position or
-                        current_time - last_feedback[object_name]['time'] > FEEDBACK_COOLDOWN):
+    # Handle single object detection
+    if sum(len(objects) for objects in objects_by_direction.values()) == 1:
+        for direction, objects in objects_by_direction.items():
+            if len(objects) == 1:
+                object_name = objects[0]
+                if object_name in response_dict and direction in response_dict[object_name]:
+                    # Use pre-defined response
+                    message = response_dict[object_name][direction]
+                else:
+                    # Use default response
+                    message = default_response.format(object_name=object_name, direction=direction)
 
-                    # Store current feedback for this object
-                    current_feedback[object_name] = {'position': position, 'time': current_time}
+                # Speak the message
+                speak_text(message)
+                return True
 
-                    # Custom responses based on object type
-                    if object_name in ["person", "obstacle", "object"]:
-                        feedback_parts.append(f"There's a {object_name} to your {position}.")
-                    elif object_name in ["upstairs", "downstairs"]:
-                        feedback_parts.append(f"Walk slowly, there's a {object_name} to your {position}.")
-                    elif object_name == "handrail":
-                        feedback_parts.append(f"Grab that handrail to your {position}.")
-                    elif object_name == "wall":
-                        feedback_parts.append(f"Walk slowly, there's a wall to your {position}.")
+    # Handle multiple object detections
+    if objects_by_direction:
+        message = format_detections(objects_by_direction)
+        if mode == "navigate":
+            message += ". Please proceed carefully."
 
-    # Update last_feedback only if there is new feedback
-    if feedback_parts:
-        last_feedback = current_feedback
-        feedback = " ".join(feedback_parts)
-    else:
-        feedback = None  # No new feedback
+        # Speak the message
+        speak_text(message)
+        return True
 
-    # Speak the feedback if available
-    if feedback:
-        result = speech_synthesizer.speak_text_async(feedback).get()
+    # No objects detected
+    return False
+
+def handle_command(input_text, is_navigating, is_identifying):
+    """Handle voice commands and set modes accordingly."""
+    if input_text.lower() == "navigate":
+        if is_navigating:
+            speak_text("You are already in navigation mode.")
+            return is_navigating, is_identifying
+        speak_text("Starting navigation mode.")
+        return True, False
+    elif input_text.lower() == "identify":
+        if is_identifying:
+            speak_text("You are already in identification mode.")
+            return is_navigating, is_identifying
+        speak_text("Starting identify mode.")
+        return False, True
+    elif input_text.lower() == "stop":
+        speak_text("Stopping all modes.")
+        return False, False
+    elif input_text.lower() == "tutorial":
+        speak_text(
+            "Welcome to the navigation assistant tutorial. Here's a quick guide on how to interact with me:"
+            " Say 'navigate' to enter navigation mode. In this mode, I will guide you through your surroundings "
+            "and describe nearby objects, obstacles, and directions."
+            " Say 'identify' to switch to identification mode, where I will help you recognize specific objects, "
+            "such as coins, furniture, or devices, and tell you their positions relative to you."
+            " Say 'stop' to exit the current mode or end our interaction."
+            " Now, go ahead and say one of the commands: 'navigate', 'identify', or 'stop'."
+        )
+    return is_navigating, is_identifying
+
+def recognize_command(recognizer, microphone):
+    """Listen and recognize user commands."""
+    try:
+        with microphone as source:
+            print("Listening for your command...")
+            recognizer.adjust_for_ambient_noise(source, duration=1)
+            audio = recognizer.listen(source)
+
+        input_text = recognizer.recognize_google(audio, language="en-US").strip()
+        print(f"Recognized command: {input_text}")
+        return input_text
+    except sr.UnknownValueError:
+        print("Command not recognized.")
+    except sr.RequestError as e:
+        speak_text("There was an error with the speech recognition service.")
+        print(f"Speech recognition service error: {e}")
+    return None
+
+
+def speak_text(text):
+    """Speak text using Azure Speech SDK with slower speech rate."""
+    try:
+        print(f"Speaking: {text}")
+        ssml_text = f"""
+        <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'>
+            <voice name='{speech_config.speech_synthesis_voice_name}'>
+                <mstts:express-as style='default'>
+                    <prosody rate='-15%'>
+                        {text}
+                    </prosody>
+                </mstts:express-as>
+            </voice>
+        </speak>
+        """
+        result = speech_synthesizer.speak_ssml_async(ssml_text).get()
         if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
-            print("Speech synthesis failed for feedback.")
+            print("Speech synthesis failed.")
+    except Exception as e:
+        print(f"Error in speech synthesis: {str(e)}")
