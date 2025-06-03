@@ -1,5 +1,13 @@
+wheel
 ultralytics==8.3.58
 azure-cognitiveservices-speech==1.41.1
 SpeechRecognition==3.13.0
+onnx
+onnxruntime
+numpy==1.23.5
 python-dotenv==1.0.1
 PyAudio==0.2.14
+RPI.GPIO
+gps
+Flask
+requests

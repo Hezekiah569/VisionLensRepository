@@ -1,5 +1,5 @@
 IDENTIFY_MODE_OBJECTS = [
-    '1', '5', '10', '20', '20 coin', '50', '100', '200', '500', '1000',
+    "'1'", "'5'", "'10'", "'20'", "'20 coin'", "'50'", "'100'", "'200'", "'500'", "'1000'",
     'phone', 'bookshelf', 'chair', 'desktop', 'door', 'keyboard', 'people',
     'table', 'bag', 'cup', 'electricfan', 'laptop', 'water dispenser'
 ]
@@ -10,52 +10,52 @@ NAVIGATE_MODE_OBJECTS = [
 ]
 
 IDENTIFY_MODE_RESPONSES = {
-    '1': {
+    "'1'": {
         'front': "That's a one peso coin in front of you.",
         'left': "That's a one peso coin to your left.",
         'right': "That's a one peso coin to your right."
     },
-    '5': {
+    "'5'": {
         'front': "Looks like a five peso coin in front of you.",
         'left': "Looks like a five peso coin to your left.",
         'right': "Looks like a five peso coin to your right."
     },
-    '10': {
+    "'10'": {
         'front': "I see a ten peso coin in front of you.",
         'left': "I see a ten peso coin to your left.",
         'right': "I see a ten peso coin to your right."
     },
-    '20': {
+    "'20'": {
         'front': "That's a twenty peso bill in front of you.",
         'left': "That's a twenty peso bill to your left.",
         'right': "That's a twenty peso bill to your right."
     },
-    '20 coin': {
+    "'20 coin'": {
         'front': "It seems to be a twenty peso coin in front of you.",
         'left': "It seems to be a twenty peso coin to your left.",
         'right': "It seems to be a twenty peso coin to your right."
     },
-    '50': {
+    "'50'": {
         'front': "This is a fifty peso bill in front of you.",
         'left': "This is a fifty peso bill to your left.",
         'right': "This is a fifty peso bill to your right."
     },
-    '100': {
+    "'100'": {
         'front': "That's a one hundred peso bill in front of you.",
         'left': "That's a one hundred peso bill to your left.",
         'right': "That's a one hundred peso bill to your right."
     },
-    '200': {
+    "'200'": {
         'front': "I see a two hundred peso bill in front of you.",
         'left': "I see a two hundred peso bill to your left.",
         'right': "I see a two hundred peso bill to your right."
     },
-    '500': {
+    "'500'": {
         'front': "That's a five hundred peso bill in front of you.",
         'left': "That's a five hundred peso bill to your left.",
         'right': "That's a five hundred peso bill to your right."
     },
-    '1000': {
+    "'1000'": {
         'front': "I see a one thousand peso bill in front of you.",
         'left': "I see a one thousand peso bill to your left.",
         'right': "I see a one thousand peso bill to your right."
@@ -163,9 +163,9 @@ NAVIGATE_MODE_RESPONSES = {
     },
 
     'people': {
-        'front': "There are people in front of you. Move carefully.",
-        'left': "There are people to your left. Give them space.",
-        'right': "There are people to your right. Be cautious."
+        'front': "There's a person in front of you. Move carefully.",
+        'left': "There's a person to your left. Give them space.",
+        'right': "There's a person to your right. Be cautious."
     },
 
     'table': {
