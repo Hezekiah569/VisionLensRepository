@@ -1,6 +1,7 @@
 import cv2
 import time
 import threading
+import numpy as np
 from LensLab.voice_assistance import (
     provide_voice_feedback,
     recognize_command,
@@ -11,107 +12,197 @@ from LensLab.object_detection import detect_objects
 from ultralytics import YOLO
 from dotenv import load_dotenv
 import speech_recognition as sr
+from LensLab.vibration_feedback import (start_vibration_feedback, stop_vibration)
 
 load_dotenv()
 
+# Global flags and objects
+vibration_thread = None
+stop_vibration_event = threading.Event()
 
-def voice_feedback_thread(detected_objects, model_names, image_width, image_height, mode):
+# Light monitoring constants
+DARKNESS_THRESHOLD = 50  # Average pixel value (0-255)
+DARK_ALERT_COOLDOWN = 5  # Seconds between alerts (now 5 seconds)
+consecutive_dark_frames = 0
+last_dark_alert_time = 0
+is_dark_alert_active = False  # Track if alert is currently being spoken
+
+
+def voice_feedback(detected_objects, model_names, image_width, image_height, mode):
+    """Provide voice feedback directly (no new thread for every feedback)."""
     provide_voice_feedback(detected_objects, model_names, image_width, image_height, mode)
 
 
-def speech_recognition_thread(recognizer, microphone, state_lock, state):
+def speech_recognition_loop(recognizer, microphone, state_lock, state):
+    """Continuous speech recognition in a thread."""
+    global vibration_thread
     while True:
         try:
             command = recognize_command(recognizer, microphone)
             if command:
                 with state_lock:
+                    was_navigating = state["is_navigating"]
                     state["is_navigating"], state["is_identifying"] = handle_command(
                         command,
                         state["is_navigating"],
                         state["is_identifying"]
                     )
+
+                    if state["is_navigating"] and not was_navigating:
+                        print("Starting vibration...")
+                        stop_vibration_event.clear()
+                        vibration_thread = threading.Thread(target=start_vibration_feedback, daemon=True)
+                        vibration_thread.start()
+
+                    if not state["is_navigating"] and was_navigating:
+                        print("Stopping vibration...")
+                        stop_vibration_event.set()
+
         except Exception as e:
-            print(f"Error in recognizing command: {e}")
+            print(f"[Speech Recognition Error] {e}")
+
+
+def check_ambient_light(frame):
+    """Calculate average brightness of the frame."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return cv2.mean(gray)[0]
+
+
+def alert_low_light():
+    """Voice alert for low-light conditions."""
+    global last_dark_alert_time, is_dark_alert_active
+    current_time = time.time()
+
+    # Only speak if cooldown has passed and no alert is active
+    if current_time - last_dark_alert_time >= DARK_ALERT_COOLDOWN and not is_dark_alert_active:
+        is_dark_alert_active = True
+        speak_text("Warning: Low light detected. Please turn on your flashlight.")
+        last_dark_alert_time = current_time
+        is_dark_alert_active = False
 
 
 def main():
+    global vibration_thread, consecutive_dark_frames, last_dark_alert_time, is_dark_alert_active
     try:
         state_lock = threading.Lock()
         state = {"is_navigating": False, "is_identifying": False}
-        last_feedback_time = 0
-        feedback_cooldown = 5
-        min_objects_for_feedback = 1
 
-        frame_skip = 10
+        frame_skip = 5
         frame_count = 0
+        last_feedback_time = 0
+        feedback_cooldown = 3  # seconds
 
-        model = YOLO('DP1.onnx', task="segment")
+        # Load models
+        main_model = YOLO('DP2-latest-640.onnx', task="segment")
+        second_model = YOLO('yolov8n-seg.onnx')  # <-- your second model
+        print("[Init] Models loaded.")
 
-        print("Initializing video capture...")
+        # Initialize video capture
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
-            raise Exception("Could not open video capture device")
+            raise IOError("Could not open video capture device")
 
-        print("Initializing speech recognition...")
+        # Initialize speech recognizer
         recognizer = sr.Recognizer()
         microphone = sr.Microphone()
 
-        initial_greeting = (
-            "Hi, my name's Samantha, and I will be your VisionAssistant for today. "
-            "To start navigation, please say 'navigate'. To start identifying objects, say 'identify'."
-            "To learn more, say 'tutorial' for a quick tutorial on how to use the system."
-        )
-        print(initial_greeting)
-        speak_text(initial_greeting)
+        # Greet
+        greeting = ("Hi, my name's Samantha, and I will be your VisionAssistant for today. "
+                    "To start navigation, please say 'navigate'. To start identifying objects, say 'identify'."
+                    "To learn more, say 'tutorial' for a quick tutorial on how to use the system.")
+        print(greeting)
+        speak_text(greeting)
 
-        print("Starting speech recognition thread...")
+        # Start speech recognition in background
         threading.Thread(
-            target=speech_recognition_thread,
+            target=speech_recognition_loop,
             args=(recognizer, microphone, state_lock, state),
             daemon=True
         ).start()
 
+        # FPS calculation
         prev_time = time.time()
-        fps_alpha = 0.9
         smoothed_fps = 0
+        fps_alpha = 0.9
+
+        print("[System] Ready.")
 
         while True:
             ret, frame = cap.read()
             if not ret:
-                print("Failed to grab frame")
+                print("[Error] Failed to grab frame")
                 break
 
             frame_count += 1
 
+            # FPS computation
             curr_time = time.time()
             time_diff = curr_time - prev_time
-            instantaneous_fps = 1 / time_diff if time_diff > 0 else 0
-            smoothed_fps = (fps_alpha * smoothed_fps +
-                            (1 - fps_alpha) * instantaneous_fps)
+            fps = 1 / time_diff if time_diff > 0 else 0
+            smoothed_fps = fps_alpha * smoothed_fps + (1 - fps_alpha) * fps
             prev_time = curr_time
 
+            # Ambient light monitoring
+            brightness = check_ambient_light(frame)
+
+            # Low-light detection logic
+            if brightness < DARKNESS_THRESHOLD:
+                consecutive_dark_frames += 1
+                # Require 3 consecutive dark frames to prevent false positives
+                if consecutive_dark_frames >= 3:
+                    threading.Thread(
+                        target=alert_low_light,
+                        daemon=True
+                    ).start()
+            else:
+                consecutive_dark_frames = 0
+
+            # Overlay FPS and light info
+            light_text = f"Light: {brightness:.1f}"
+            cv2.putText(frame, light_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (0, 255, 0) if brightness >= DARKNESS_THRESHOLD else (0, 0, 255),
+                        2, cv2.LINE_AA)
             fps_text = f"FPS: {smoothed_fps:.2f}"
             cv2.putText(frame, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
                         1, (0, 255, 0), 2, cv2.LINE_AA)
 
+            # Check modes
             with state_lock:
-                is_navigating = state["is_navigating"]
-                is_identifying = state["is_identifying"]
+                navigating = state["is_navigating"]
+                identifying = state["is_identifying"]
 
-            if (is_navigating or is_identifying) and frame_count % frame_skip == 0:
+            if (navigating or identifying) and frame_count % frame_skip == 0:
                 image_height, image_width = frame.shape[:2]
-                detected_objects, annotated_frame = detect_objects(frame, model)
+                detected_objects, annotated_frame = detect_objects(frame, main_model)
 
-                if (len(detected_objects) >= min_objects_for_feedback and
-                        (curr_time - last_feedback_time) >= feedback_cooldown):
-                    mode = "navigate" if is_navigating else "identify"
-                    voice_thread = threading.Thread(
-                        target=voice_feedback_thread,
-                        args=(detected_objects, model.names, image_width, image_height, mode)
-                    )
-                    voice_thread.start()
+                ## NEW BLOCK: Second model detections
+                second_results = second_model(frame)[0]
+                for box in second_results.boxes.data.tolist():
+                    x1, y1, x2, y2, score, class_id = box
+                    if int(class_id) in [0, 56]:  # Only people and chairs
+                        label = "people" if int(class_id) == 0 else "chair"
+
+                        # Draw the detection
+                        cv2.rectangle(annotated_frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
+                        cv2.putText(annotated_frame, label, (int(x1), int(y1) - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
+                        # Add detection for voice feedback
+                        detected_objects.append({
+                            'name': label,
+                            'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                            'confidence': float(score)
+                        })
+
+                if detected_objects and (curr_time - last_feedback_time >= feedback_cooldown):
+                    mode = "navigate" if navigating else "identify"
+                    voice_feedback(detected_objects, main_model.names, image_width, image_height, mode)
                     last_feedback_time = curr_time
 
+                # Add light info to annotated frame
+                cv2.putText(annotated_frame, light_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7, (0, 255, 0) if brightness >= DARKNESS_THRESHOLD else (0, 0, 255),
+                            2, cv2.LINE_AA)
                 cv2.putText(annotated_frame, fps_text, (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
                 cv2.imshow('Smart Eyewear', annotated_frame)
@@ -119,17 +210,19 @@ def main():
                 cv2.imshow('Smart Eyewear', frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("Quit command received")
+                print("[System] Quit signal received.")
                 break
-
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
+        print(f"[Exception] {str(e)}")
     finally:
-        print("Cleaning up...")
+        print("[System] Cleaning up...")
+        stop_vibration_event.set()
+        if vibration_thread and vibration_thread.is_alive():
+            vibration_thread.join()
         if 'cap' in locals():
             cap.release()
         cv2.destroyAllWindows()
-        print("System shutdown complete")
+        print("[System] Shutdown complete.")
 
 
 if __name__ == "__main__":

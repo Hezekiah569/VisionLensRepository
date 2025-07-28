@@ -82,13 +82,21 @@ def provide_voice_feedback(detected_objects, class_names, image_width, image_hei
     objects_by_direction = defaultdict(list)
 
     for obj in detected_objects:
+        object_name = None
+
         if 'class' in obj and 'bbox' in obj:
+            # Objects from main model
             index = obj['class']
             if 0 <= index < len(class_names):
                 object_name = class_names[index]
-                if object_name in valid_objects:
-                    direction = get_object_direction(obj['bbox'], image_width)
-                    objects_by_direction[direction].append(object_name)
+        elif 'name' in obj and 'bbox' in obj:
+            # Objects from second model (people/chair)
+            object_name = obj['name']
+
+        normalized_valid_objects = [v.lower().strip() for v in valid_objects]
+        if object_name.lower().strip() in normalized_valid_objects:
+            direction = get_object_direction(obj['bbox'], image_width)
+            objects_by_direction[direction].append(object_name)
 
     # Handle single object detection
     if sum(len(objects) for objects in objects_by_direction.values()) == 1:
