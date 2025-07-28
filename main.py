@@ -12,7 +12,7 @@ from LensLab.object_detection import detect_objects
 from ultralytics import YOLO
 from dotenv import load_dotenv
 import speech_recognition as sr
-from LensLab.vibration_feedback import start_vibration_feedback, stop_vibration
+from LensLab.vibration_feedback import (start_vibration_feedback, stop_vibration)
 
 load_dotenv()
 
@@ -20,9 +20,18 @@ load_dotenv()
 vibration_thread = None
 stop_vibration_event = threading.Event()
 
+# Light monitoring constants
+DARKNESS_THRESHOLD = 50  # Average pixel value (0-255)
+DARK_ALERT_COOLDOWN = 5  # Seconds between alerts (now 5 seconds)
+consecutive_dark_frames = 0
+last_dark_alert_time = 0
+is_dark_alert_active = False  # Track if alert is currently being spoken
+
+
 def voice_feedback(detected_objects, model_names, image_width, image_height, mode):
     """Provide voice feedback directly (no new thread for every feedback)."""
     provide_voice_feedback(detected_objects, model_names, image_width, image_height, mode)
+
 
 def speech_recognition_loop(recognizer, microphone, state_lock, state):
     """Continuous speech recognition in a thread."""
@@ -52,8 +61,28 @@ def speech_recognition_loop(recognizer, microphone, state_lock, state):
         except Exception as e:
             print(f"[Speech Recognition Error] {e}")
 
+
+def check_ambient_light(frame):
+    """Calculate average brightness of the frame."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return cv2.mean(gray)[0]
+
+
+def alert_low_light():
+    """Voice alert for low-light conditions."""
+    global last_dark_alert_time, is_dark_alert_active
+    current_time = time.time()
+
+    # Only speak if cooldown has passed and no alert is active
+    if current_time - last_dark_alert_time >= DARK_ALERT_COOLDOWN and not is_dark_alert_active:
+        is_dark_alert_active = True
+        speak_text("Warning: Low light detected. Please turn on your flashlight.")
+        last_dark_alert_time = current_time
+        is_dark_alert_active = False
+
+
 def main():
-    global vibration_thread
+    global vibration_thread, consecutive_dark_frames, last_dark_alert_time, is_dark_alert_active
     try:
         state_lock = threading.Lock()
         state = {"is_navigating": False, "is_identifying": False}
@@ -78,9 +107,9 @@ def main():
         microphone = sr.Microphone()
 
         # Greet
-        greeting = ( "Hi, my name's Samantha, and I will be your VisionAssistant for today. "
-            "To start navigation, please say 'navigate'. To start identifying objects, say 'identify'."
-            "To learn more, say 'tutorial' for a quick tutorial on how to use the system.")
+        greeting = ("Hi, my name's Samantha, and I will be your VisionAssistant for today. "
+                    "To start navigation, please say 'navigate'. To start identifying objects, say 'identify'."
+                    "To learn more, say 'tutorial' for a quick tutorial on how to use the system.")
         print(greeting)
         speak_text(greeting)
 
@@ -113,7 +142,26 @@ def main():
             smoothed_fps = fps_alpha * smoothed_fps + (1 - fps_alpha) * fps
             prev_time = curr_time
 
-            # Overlay FPS
+            # Ambient light monitoring
+            brightness = check_ambient_light(frame)
+
+            # Low-light detection logic
+            if brightness < DARKNESS_THRESHOLD:
+                consecutive_dark_frames += 1
+                # Require 3 consecutive dark frames to prevent false positives
+                if consecutive_dark_frames >= 3:
+                    threading.Thread(
+                        target=alert_low_light,
+                        daemon=True
+                    ).start()
+            else:
+                consecutive_dark_frames = 0
+
+            # Overlay FPS and light info
+            light_text = f"Light: {brightness:.1f}"
+            cv2.putText(frame, light_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (0, 255, 0) if brightness >= DARKNESS_THRESHOLD else (0, 0, 255),
+                        2, cv2.LINE_AA)
             fps_text = f"FPS: {smoothed_fps:.2f}"
             cv2.putText(frame, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
                         1, (0, 255, 0), 2, cv2.LINE_AA)
@@ -139,19 +187,22 @@ def main():
                         cv2.putText(annotated_frame, label, (int(x1), int(y1) - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
-                        # ?? Add detection for voice feedback
+                        # Add detection for voice feedback
                         detected_objects.append({
                             'name': label,
                             'bbox': [int(x1), int(y1), int(x2), int(y2)],
                             'confidence': float(score)
                         })
 
-
                 if detected_objects and (curr_time - last_feedback_time >= feedback_cooldown):
                     mode = "navigate" if navigating else "identify"
                     voice_feedback(detected_objects, main_model.names, image_width, image_height, mode)
                     last_feedback_time = curr_time
 
+                # Add light info to annotated frame
+                cv2.putText(annotated_frame, light_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7, (0, 255, 0) if brightness >= DARKNESS_THRESHOLD else (0, 0, 255),
+                            2, cv2.LINE_AA)
                 cv2.putText(annotated_frame, fps_text, (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
                 cv2.imshow('Smart Eyewear', annotated_frame)
@@ -172,6 +223,7 @@ def main():
             cap.release()
         cv2.destroyAllWindows()
         print("[System] Shutdown complete.")
+
 
 if __name__ == "__main__":
     main()
